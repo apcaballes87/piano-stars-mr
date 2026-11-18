@@ -1,0 +1,297 @@
+// Web Worker: finds piano notes in the microphone sound.
+// "mono" = one note at a time (YIN method), ported from PitchDetector.java.
+// "poly" = more than one note (Goertzel filters), ported from PolyDetector.java.
+
+let sr = 48000;
+let det = null;
+let mode = 'mono';
+
+function post(msg) {
+  self.postMessage(msg);
+}
+
+// ------------------------------------------------------------------ mono
+
+function makeMono(rate) {
+  const WIN = 2048;
+  const HOP = 1024;
+  const TAU_MAX = Math.floor(rate / 80); // lowest note about 80 Hz (E2)
+  const TAU_MIN = Math.floor(rate / 1400); // highest note about 1400 Hz (F6)
+  const THRESHOLD = 0.15;
+  const win = new Float32Array(WIN);
+  const d = new Float32Array(TAU_MAX + 1);
+  let frames = 0;
+  let noiseSum = 0;
+  let gate = 0.01;
+  let prevRms = 0;
+  let candidate = -1;
+  let stable = 0;
+  let lastEmitted = -1;
+  let pendingOnset = false;
+
+  function yin() {
+    const w = WIN - TAU_MAX;
+    d[0] = 1;
+    let run = 0;
+    for (let tau = 1; tau <= TAU_MAX; tau++) {
+      let s = 0;
+      for (let j = 0; j < w; j++) {
+        const df = win[j] - win[j + tau];
+        s += df * df;
+      }
+      run += s;
+      d[tau] = run > 0 ? (s * tau) / run : 1;
+    }
+    let best = -1;
+    for (let tau = TAU_MIN; tau <= TAU_MAX; tau++) {
+      if (d[tau] < THRESHOLD) {
+        while (tau + 1 <= TAU_MAX && d[tau + 1] < d[tau]) tau++;
+        best = tau;
+        break;
+      }
+    }
+    if (best < 0) return -1;
+    let b = best;
+    if (best > 1 && best < TAU_MAX) {
+      const a = d[best - 1];
+      const m = d[best];
+      const c = d[best + 1];
+      const den = a + c - 2 * m;
+      if (Math.abs(den) > 1e-9) b = best + (0.5 * (a - c)) / den;
+    }
+    return rate / b;
+  }
+
+  return {
+    feed(samples, at) {
+      // samples: 1024 raw samples, at = audio time of the last sample
+      win.copyWithin(0, HOP);
+      let sq = 0;
+      for (let i = 0; i < HOP; i++) {
+        const s = samples[i];
+        win[WIN - HOP + i] = s;
+        sq += s * s;
+      }
+      const rms = Math.sqrt(sq / HOP);
+      const when = at - 0.035; // the sound is about half a window older
+      frames++;
+      if (frames <= 12) {
+        noiseSum += rms;
+        if (frames === 12) gate = Math.min(0.04, Math.max(0.006, (noiseSum / 12) * 2.5));
+        prevRms = rms;
+        return;
+      }
+      if (rms < gate) {
+        candidate = -1;
+        stable = 0;
+        lastEmitted = -1;
+        pendingOnset = false;
+        prevRms = rms;
+        post({ t: 'hear', m: -1, lv: rms });
+        return;
+      }
+      if (rms > prevRms * 1.6 && rms > gate * 1.5) pendingOnset = true; // a new key strike
+      prevRms = rms;
+      const f = yin();
+      const midi = f > 0 ? Math.round(69 + 12 * Math.log2(f / 440)) : -1;
+      post({ t: 'hear', m: midi, lv: rms });
+      if (midi < 0) return;
+      if (midi === candidate) {
+        stable++;
+      } else {
+        candidate = midi;
+        stable = 1;
+      }
+      if (stable >= 2 && (midi !== lastEmitted || pendingOnset)) {
+        post({ t: 'note', m: midi, at: when });
+        lastEmitted = midi;
+        pendingOnset = false;
+      }
+    },
+  };
+}
+
+// ------------------------------------------------------------------ poly
+
+function makePoly(rawRate) {
+  const factor = Math.max(1, Math.round(rawRate / 22050));
+  const SR = rawRate / factor;
+  const N = 4096;
+  const HOP = 1024;
+  const LOW = 36; // C2
+  const COUNT = 48; // up to B5
+  const HARM = 4;
+  const REFRACTORY = 0.15;
+  const half = N / 2;
+  const hann = new Float32Array(N);
+  const hannHalf = new Float32Array(half);
+  for (let i = 0; i < N; i++) hann[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (N - 1));
+  for (let i = 0; i < half; i++) hannHalf[i] = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (half - 1));
+  const coef = [];
+  const harmCount = new Int32Array(COUNT);
+  for (let k = 0; k < COUNT; k++) {
+    const f = 440 * Math.pow(2, (LOW + k - 69) / 12);
+    const row = new Float64Array(HARM);
+    let hc = 0;
+    for (let h = 1; h <= HARM; h++) {
+      const fh = f * h;
+      if (fh > SR / 2 - 200) break;
+      row[h - 1] = 2 * Math.cos((2 * Math.PI * fh) / SR);
+      hc++;
+    }
+    coef.push(row);
+    harmCount[k] = hc;
+  }
+  const buf = new Float32Array(N);
+  const xw = new Float32Array(N);
+  const xa = new Float32Array(half);
+  const xb = new Float32Array(half);
+  const hopBuf = new Float32Array(HOP);
+  let hopN = 0;
+  let carry = 0;
+  let carryN = 0;
+  const sal = new Float64Array(COUNT);
+  const h1 = new Float64Array(COUNT);
+  const hmax = new Float64Array(COUNT);
+  const oldH = new Float64Array(COUNT);
+  const newH = new Float64Array(COUNT);
+  const floor = new Float64Array(COUNT);
+  const lastOnset = new Float64Array(COUNT).fill(-1e9);
+  const cand = new Uint8Array(COUNT);
+  const mags = new Float64Array(HARM);
+  let frames = 0;
+  let rmsSum = 0;
+  let rmsGate = 0.01;
+  const overtone = [12, 19, 24];
+
+  function salience(x, n, k, out) {
+    let s = 0;
+    const row = coef[k];
+    for (let h = 0; h < harmCount[k]; h++) {
+      const c = row[h];
+      let s1 = 0;
+      let s2 = 0;
+      for (let j = 0; j < n; j++) {
+        const s0 = x[j] + c * s1 - s2;
+        s2 = s1;
+        s1 = s0;
+      }
+      const m = Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - c * s1 * s2));
+      if (out) out[h] = m;
+      s += m / (h + 1);
+    }
+    return s;
+  }
+
+  function hop(now) {
+    buf.copyWithin(0, HOP);
+    let sq = 0;
+    for (let i = 0; i < HOP; i++) {
+      const v = hopBuf[i];
+      buf[N - HOP + i] = v;
+      sq += v * v;
+    }
+    const rms = Math.sqrt(sq / HOP);
+    const when = now - 0.07;
+    frames++;
+    for (let i = 0; i < N; i++) xw[i] = buf[i] * hann[i];
+    for (let i = 0; i < half; i++) {
+      xa[i] = buf[i] * hannHalf[i];
+      xb[i] = buf[half + i] * hannHalf[i];
+    }
+    let max = 0;
+    let maxK = -1;
+    for (let k = 0; k < COUNT; k++) {
+      sal[k] = salience(xw, N, k, mags);
+      h1[k] = mags[0];
+      let m = 0;
+      for (let h = 0; h < harmCount[k]; h++) m = Math.max(m, mags[h]);
+      hmax[k] = m;
+      oldH[k] = salience(xa, half, k, null);
+      newH[k] = salience(xb, half, k, null);
+      if (sal[k] > max) {
+        max = sal[k];
+        maxK = k;
+      }
+    }
+    if (frames <= 10) {
+      // measure the room noise during the first half second
+      rmsSum += rms;
+      for (let k = 0; k < COUNT; k++) floor[k] += sal[k] / 10;
+      if (frames === 10) rmsGate = Math.min(0.04, Math.max(0.005, (rmsSum / 10) * 2.5));
+      return;
+    }
+    const loud = rms > rmsGate;
+    post({ t: 'hear', m: loud && maxK >= 0 && max > floor[maxK] * 5 ? LOW + maxK : -1, lv: rms });
+    cand.fill(0);
+    for (let k = 0; k < COUNT; k++) {
+      const s = sal[k];
+      const peak = (k === 0 || s >= sal[k - 1]) && (k === COUNT - 1 || s >= sal[k + 1]);
+      const fundamental = h1[k] >= 0.2 * hmax[k];
+      let onset = loud && peak && fundamental
+        && newH[k] > oldH[k] * 1.6 + 1e-9
+        && s > floor[k] * 5
+        && s >= max * 0.2
+        && now - lastOnset[k] > REFRACTORY;
+      if (onset) {
+        // ignore an overtone of a lower note that was just played
+        for (const dd of overtone) {
+          const l = k - dd;
+          if (l >= 0 && (cand[l] || now - lastOnset[l] < 0.1) && s < 2.0 * sal[l]) {
+            onset = false;
+            break;
+          }
+        }
+      }
+      if (onset) {
+        cand[k] = 1;
+        lastOnset[k] = now;
+        post({ t: 'note', m: LOW + k, at: when });
+      } else if (s < floor[k] * 3) {
+        floor[k] = floor[k] * 0.995 + s * 0.005;
+      }
+    }
+  }
+
+  return {
+    feed(samples, at) {
+      const n = samples.length;
+      for (let i = 0; i < n; i++) {
+        carry += samples[i];
+        carryN++;
+        if (carryN === factor) {
+          hopBuf[hopN++] = carry / factor;
+          carry = 0;
+          carryN = 0;
+          if (hopN === HOP) {
+            hopN = 0;
+            hop(at - (n - 1 - i) / rawRate);
+          }
+        }
+      }
+    },
+  };
+}
+
+function reset() {
+  det = mode === 'poly' ? makePoly(sr) : makeMono(sr);
+}
+
+self.onmessage = (e) => {
+  const d = e.data;
+  if (d.cmd === 'init') {
+    sr = d.sr;
+    reset();
+    d.port.onmessage = (ev) => {
+      if (det) det.feed(ev.data.s, ev.data.at);
+    };
+  } else if (d.cmd === 'mode') {
+    if (d.mode !== mode || d.reset) {
+      mode = d.mode;
+      reset();
+    }
+  } else if (d.cmd === 'test') {
+    // test hook: feed samples directly
+    if (det) det.feed(d.s, d.at);
+  }
+};

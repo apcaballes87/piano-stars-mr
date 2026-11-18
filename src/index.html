@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Piano Stars MR</title>
+<meta name="theme-color" content="#1B1840">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #1B1840; color: #fff;
+    font-family: system-ui, -apple-system, Roboto, "Segoe UI", sans-serif; }
+  #gl { position: fixed; inset: 0; touch-action: none; }
+  #menu { display: flex; gap: 28px; padding: 18px 32px; height: 100%; }
+  #left { flex: 0 0 40%; overflow-y: auto; padding-bottom: 24px; }
+  #right { flex: 1; overflow-y: auto; padding-bottom: 24px; }
+  h1 { color: #FFD23F; font-size: 30px; margin: 4px 0 2px; }
+  h1 span { font-size: 15px; background: #8C6BFF; color: #fff; border-radius: 10px; padding: 3px 9px; vertical-align: middle; margin-left: 6px; }
+  .dev { color: #B8B3E6; font-size: 15px; margin-bottom: 12px; }
+  h3 { margin: 16px 0 6px; font-size: 17px; }
+  h2 { margin: 6px 0 8px; font-size: 21px; }
+  button { font: inherit; font-weight: 700; font-size: 16px; color: #fff; border: 0; border-radius: 18px;
+    min-height: 50px; padding: 0 14px; cursor: pointer; }
+  .row { display: flex; gap: 8px; margin-top: 8px; }
+  .row > button { flex: 1; }
+  #levels { display: flex; gap: 8px; }
+  .lvl { flex: 1; background: #2E2A5C; border: 2px solid var(--c); min-height: 52px; }
+  .lvl.on { background: var(--c); color: #15122E; border-color: transparent; }
+  #wait { background: #FF9F1C; }
+  #hands { background: #E15FED; }
+  #view { background: #4D9DE0; }
+  #input { background: #8C6BFF; }
+  #speed { width: 100%; margin: 8px 0; accent-color: #3BCEAC; height: 30px; }
+  #micBar { background: #3B3570; border-radius: 18px; padding: 10px 14px; margin-top: 10px; }
+  #micBar p { margin: 0 0 8px; color: #FFE066; }
+  #micBtn { background: #5BE38B; color: #15122E; width: 100%; }
+  #setupRow { background: #2E2A5C; border-radius: 18px; padding: 10px 14px; margin-top: 12px; }
+  #setupRow p { margin: 0 0 8px; color: #DCD8FF; font-size: 15px; }
+  #setupBtn { background: #3BCEAC; color: #15122E; }
+  #resetBtn { background: #3B3570; font-size: 14px; }
+  .song { display: flex; align-items: center; gap: 8px; background: #2E2A5C; border-radius: 18px; padding: 12px; margin: 8px 0; }
+  .song .info { flex: 1; min-width: 0; }
+  .song .t { font-weight: 700; font-size: 18px; }
+  .song .s { color: #FFD23F; font-size: 15px; margin-top: 3px; white-space: pre; }
+  .listen { background: #4D9DE0; width: 96px; }
+  .play { background: #5BE38B; color: #15122E; width: 96px; }
+  .note { color: #9C97CF; font-size: 13px; }
+  #toast { display: none; position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%); background: #FFE066; color: #15122E;
+    padding: 12px 20px; border-radius: 14px; font-weight: 700; max-width: 90%; z-index: 9; box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+  #ver { color: #6E6A9C; font-size: 12px; margin-top: 18px; }
+  @media (max-width: 760px) { #menu { flex-direction: column; height: auto; } #left { flex: none; } }
+</style>
+</head>
+<body>
+<div id="menu">
+  <div id="left">
+    <h1>Piano Stars <span>MR</span></h1>
+    <div class="dev" id="device">Checking for a headset...</div>
+    <h3>Level</h3>
+    <div id="levels"></div>
+    <h3>Settings</h3>
+    <div class="row"><button id="wait"></button><button id="hands"></button></div>
+    <div class="row"><button id="view"></button></div>
+    <div class="row" id="inputRow"><button id="input"></button></div>
+    <h3 id="speedLabel">Speed</h3>
+    <input id="speed" type="range" min="0" max="40" step="1">
+    <div id="micBar"><p>The game listens to your piano with the microphone.</p><button id="micBtn">Turn on the microphone</button></div>
+    <div id="setupRow">
+      <p id="setupState"></p>
+      <div class="row" style="margin-top:0"><button id="setupBtn">Set up piano keys</button><button id="resetBtn">Forget setup</button></div>
+    </div>
+    <div id="ver"></div>
+  </div>
+  <div id="right"><div id="songs"></div></div>
+</div>
+<div id="toast"></div>
+<script>/*APP*/</script>
+</body>
+</html>
