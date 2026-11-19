@@ -12,6 +12,24 @@ const WHITE_C = new THREE.Color('#FFFFFF');
 const RED = '#FF6B6B';
 const GHOST_LO = 36; // C2
 const GHOST_HI = 84; // C6
+const SPARK_LIFE = 0.55; // seconds
+
+/** A soft round dot for the sparks. */
+function dotTexture() {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)');
+  gr.addColorStop(0.5, 'rgba(255,255,255,0.9)');
+  gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
 function pcColor(m) {
   return new THREE.Color(PC_COLORS[((m % 12) + 12) % 12]);
@@ -245,14 +263,17 @@ export class Stage {
     const N = 400;
     this.sparkN = N;
     this.sparkPos = new Float32Array(N * 3);
-    this.sparkCol = new Float32Array(N * 3);
-    this.sparkData = Array.from({ length: N }, () => ({ age: 9, vx: 0, vy: 0, vz: 0, r: 0, g: 0, b: 0 }));
+    // RGBA per spark: the alpha goes to 0, so a spark fades to clear (not to black).
+    this.sparkCol = new Float32Array(N * 4);
+    this.sparkData = Array.from({ length: N }, () => ({ age: 9, vx: 0, vy: 0, vz: 0, r: 0, g: 0, b: 0, floor: 0 }));
     this.sparkNext = 0;
+    for (let i = 0; i < N; i++) this.sparkPos[i * 3 + 1] = -10; // parked out of sight
     const sg = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.BufferAttribute(this.sparkPos, 3));
-    sg.setAttribute('color', new THREE.BufferAttribute(this.sparkCol, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(this.sparkCol, 4));
     this.sparks = new THREE.Points(sg, new THREE.PointsMaterial({
-      size: 0.005, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      size: 0.006, map: dotTexture(), vertexColors: true, transparent: true, depthWrite: false,
+      blending: THREE.NormalBlending,
     }));
     this.sparks.frustumCulled = false;
     this.sparks.renderOrder = 6;
@@ -327,7 +348,9 @@ export class Stage {
     }
     this.placeGameStatic();
     for (const p of this.pops) p.visible = false;
-    for (const d of this.sparkData) d.age = 9;
+    for (let i = 0; i < this.sparkN; i++) this.killSpark(i);
+    this.sparks.geometry.attributes.position.needsUpdate = true;
+    this.sparks.geometry.attributes.color.needsUpdate = true;
   }
 
   /** Things that only move when the calibration changes. */
@@ -370,6 +393,7 @@ export class Stage {
       const idx = this.sparkNext;
       this.sparkNext = (this.sparkNext + 1) % this.sparkN;
       d.age = 0;
+      d.floor = L.topY(m) - 0.001;
       const white = Math.random() < 0.5;
       d.r = white ? 1 : c.r;
       d.g = white ? 1 : c.g;
@@ -402,6 +426,12 @@ export class Stage {
   onCombo(count) {
     const [x0, x1] = this.rangeX;
     this.addPop(count + ' in a row!', '#FF9FF3', (x0 + x1) / 2, FALL_H * 0.6, -0.02, 1.5);
+  }
+
+  killSpark(i) {
+    this.sparkData[i].age = 9;
+    this.sparkCol[i * 4 + 3] = 0;
+    this.sparkPos[i * 3 + 1] = -10; // park it out of sight
   }
 
   flashKey(m, color) {
@@ -563,23 +593,23 @@ export class Stage {
     let any = false;
     for (let i = 0; i < this.sparkN; i++) {
       const d = this.sparkData[i];
-      if (d.age > 0.7) {
-        if (this.sparkCol[i * 3] !== 0 || this.sparkCol[i * 3 + 1] !== 0) {
-          this.sparkCol[i * 3] = this.sparkCol[i * 3 + 1] = this.sparkCol[i * 3 + 2] = 0;
-          any = true;
-        }
-        continue;
-      }
+      if (d.age >= SPARK_LIFE) continue;
       any = true;
       d.age += dt;
-      d.vy -= 0.35 * dt;
+      d.vy -= 0.25 * dt;
       this.sparkPos[i * 3] += d.vx * dt;
       this.sparkPos[i * 3 + 1] += d.vy * dt;
       this.sparkPos[i * 3 + 2] += d.vz * dt;
-      const a = Math.max(0, 1 - d.age / 0.7);
-      this.sparkCol[i * 3] = d.r * a;
-      this.sparkCol[i * 3 + 1] = d.g * a;
-      this.sparkCol[i * 3 + 2] = d.b * a;
+      // A spark ends when its time is up, or before it falls below the key top.
+      if (d.age >= SPARK_LIFE || this.sparkPos[i * 3 + 1] < d.floor) {
+        this.killSpark(i);
+        continue;
+      }
+      const a = Math.pow(1 - d.age / SPARK_LIFE, 1.5);
+      this.sparkCol[i * 4] = d.r;
+      this.sparkCol[i * 4 + 1] = d.g;
+      this.sparkCol[i * 4 + 2] = d.b;
+      this.sparkCol[i * 4 + 3] = a;
     }
     if (any) {
       this.sparks.geometry.attributes.position.needsUpdate = true;
@@ -618,7 +648,7 @@ export class Stage {
     const W = P.pxW;
     P.card();
     // top row
-    P.text(g.song.title, 36, 52, 40, '#FFFFFF', 'left', true, 430);
+    P.text(g.song.title, 36, 52, 40, '#FFFFFF', 'left', true, 370);
     P.text('Score ' + g.score + (g.combo >= 3 ? '  x' + g.combo : ''), W * 0.52, 52, 38, '#FFE066');
     if (opts.input === 'tap') {
       P.text('Tap keys', W - 36, 52, 32, '#B8B3E6', 'right', false);

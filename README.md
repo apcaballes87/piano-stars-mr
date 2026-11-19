@@ -5,7 +5,9 @@ Blocks fall onto the real piano keys. The game uses the same songs, levels and r
 
 ## Files
 
-- `PianoStars-MR-v0.1.1.html` - the complete app in one file (version 0.1.1, the live version).
+- `PianoStars-MR-v0.1.2.html` - the complete app in one file (version 0.1.2, the live version).
+  - v0.1.2: the explosion sparks fade to clear and end before they fall below the keys (no black pieces).
+- `PianoStars-MR-v0.1.1.html` - version 0.1.1.
   - v0.1.1: keeps the microphone running in the headset, shows a microphone test and level, counts key presses seen by finger tracking, and can use a USB piano (MIDI).
 - `PianoStars-MR-v0.1.0.html` - the first version.
 - `docs/index.html` - the same file. GitHub Pages serves this folder at https://apcaballes87.github.io/piano-stars-mr/

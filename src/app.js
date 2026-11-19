@@ -7,7 +7,7 @@ import { AudioIO, meter } from './audio.js';
 import { XRPlay, loadCal } from './xr.js';
 import { PreviewPlay } from './preview.js';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const LEVEL_COLORS = ['#3BCEAC', '#4D9DE0', '#FF5A5F'];
 
 // ------------------------------------------------------------ settings
