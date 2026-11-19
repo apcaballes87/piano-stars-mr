@@ -7,7 +7,7 @@ import { AudioIO, meter } from './audio.js';
 import { XRPlay, loadCal } from './xr.js';
 import { PreviewPlay } from './preview.js';
 
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const LEVEL_COLORS = ['#3BCEAC', '#4D9DE0', '#FF5A5F'];
 
 // ------------------------------------------------------------ settings
@@ -36,9 +36,8 @@ const S = {
   speed: store.get('speed', 1),
   input: store.get('input', 'mic'), // screen mode only: 'mic' or 'tap'
   view: store.get('view', null), // 'mr' or 'screen'
-  fingers: store.get('fingers', true), // headset: also count key presses seen by hand tracking
 };
-S.wait = store.get('wait_' + S.level, S.level === EASY);
+S.wait = store.get('wait_' + S.level, true);
 
 // ------------------------------------------------------------ 3D setup
 
@@ -95,7 +94,7 @@ const app = {
 
 // ------------------------------------------------------------ key press inputs
 
-// One key press can arrive from more than one input (microphone, finger tracking, USB piano).
+// One key press can arrive from more than one input (microphone, USB piano).
 // Count it once: ignore the same note name from another input within 0.3 s.
 const recent = [];
 let midiInputs = 0;
@@ -110,10 +109,7 @@ app.input = (m, ago, src) => {
     if (r.pc === pc && r.src !== src && Math.abs(r.t - t) < 0.3) return;
   }
   recent.push({ pc, src, t });
-  if (app.game) {
-    app.game.noteHeard(m, ago);
-    stage.onInput(m);
-  }
+  if (app.game) app.game.noteHeard(m, ago);
   if (mode === 'screen') preview.heard(m);
 };
 
@@ -208,7 +204,7 @@ function listen(song) {
 function setLevel(lv) {
   stopListen();
   S.level = lv;
-  S.wait = store.get('wait_' + lv, lv === EASY);
+  S.wait = store.get('wait_' + lv, true);
   store.set('level', lv);
   render();
 }
@@ -235,8 +231,6 @@ function render() {
   const needMic = !audio.micOk && (S.view === 'mr' || S.input === 'mic');
   $('micBar').style.display = needMic ? '' : 'none';
   $('micTest').style.display = audio.micOk ? '' : 'none';
-  $('fingers').textContent = S.fingers ? 'Finger tracking: ON' : 'Finger tracking: OFF';
-  $('fingerRow').style.display = S.view === 'mr' ? '' : 'none';
   $('midiBtn').style.display = navigator.requestMIDIAccess ? '' : 'none';
   $('midiBtn').textContent = midiInputs ? 'USB piano connected' : 'Connect USB piano (MIDI)';
   const cal = loadCal();
@@ -381,11 +375,6 @@ function wire() {
   $('resetBtn').onclick = () => {
     localStorage.removeItem('psmr.cal.v1');
     toast('Piano setup removed. You will set it up again next time.');
-    render();
-  };
-  $('fingers').onclick = () => {
-    S.fingers = !S.fingers;
-    store.set('fingers', S.fingers);
     render();
   };
   $('midiBtn').onclick = () => connectMidi();

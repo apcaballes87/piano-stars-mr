@@ -87,6 +87,7 @@ export class Game {
     this.stars = 0;
     this.hint = '';
     this.hintAge = 99;
+    this.rushRate = 0; // wait mode: beats per second to bring the next block down fast
   }
 
   /** Beats per second at the current speed. */
@@ -155,9 +156,14 @@ export class Game {
       this.waiting = false;
       if (this.nextIdx < notes.length) {
         const n = notes[this.nextIdx];
+        if (this.rushRate > 0 && this.songTime < n.start) {
+          // A right note was played: bring the next block down fast, do not wait for the beat.
+          this.songTime = Math.min(n.start, this.songTime + Math.max(0, (this.rushRate - this.bps()) * dt));
+        }
         if (this.songTime >= n.start) {
           this.songTime = n.start;
           this.waiting = true;
+          this.rushRate = 0;
         }
       }
     } else {
@@ -193,7 +199,8 @@ export class Game {
       this.nextIdx = this.firstPending();
       if (this.nextIdx >= notes.length) return;
       const first = notes[this.nextIdx];
-      if (this.songTime < first.start - 0.8 * this.bps()) return; // too early, ignore
+      // Listen as soon as the next block can be seen. The right key moves the song on at once.
+      if (first.start - this.songTime > this.lookAhead * this.bps()) return;
       const end = this.groupEnd(this.nextIdx);
       for (let i = this.nextIdx; i < end; i++) {
         const n = notes[i];
@@ -204,7 +211,7 @@ export class Game {
         }
       }
       // Two-hand listening is less strict, so do not count wrong notes there.
-      if (!this.twoHands && this.songTime >= first.start - 0.3 * this.bps()) {
+      if (!this.twoHands) {
         first.tries++;
         this.hint = 'That was ' + NAMES[midi % 12] + '. Find ' + NAMES[first.midi % 12] + '!';
         this.hintAge = 0;
@@ -239,8 +246,22 @@ export class Game {
       this.score += 60;
     }
     this.score += Math.min(this.combo, 20) * 5;
+    if (this.waitMode) this.startRush(n);
     this.fx.hit && this.fx.hit(n, isPerfect);
     if (this.combo > 0 && this.combo % 10 === 0) this.fx.combo && this.fx.combo(this.combo);
+  }
+
+  /** Wait mode: when the whole chord is played, the next block comes down in about 0.15 s. */
+  startRush(n) {
+    for (const g of this.notes) {
+      if (g.start > n.start + 1e-6) break;
+      if (g.state === PENDING && Math.abs(g.start - n.start) < 1e-6) return; // chord not done yet
+    }
+    let j = this.nextIdx;
+    while (j < this.notes.length && this.notes[j].state !== PENDING) j++;
+    if (j >= this.notes.length) return;
+    const gap = this.notes[j].start - this.songTime;
+    if (gap > 0) this.rushRate = Math.max(this.bps() * 3, gap / 0.15);
   }
 
   miss(n) {

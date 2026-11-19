@@ -5,7 +5,9 @@ Blocks fall onto the real piano keys. The game uses the same songs, levels and r
 
 ## Files
 
-- `PianoStars-MR-v0.1.2.html` - the complete app in one file (version 0.1.2, the live version).
+- `PianoStars-MR-v0.1.3.html` - the complete app in one file (version 0.1.3, the live version).
+  - v0.1.3: listens with the microphone only (no finger tracking). With "Wait for me" on (now the default on all levels), the right note brings the next block down at once. Fewer panel redraws for smoother play.
+- `PianoStars-MR-v0.1.2.html` - version 0.1.2.
   - v0.1.2: the explosion sparks fade to clear and end before they fall below the keys (no black pieces).
 - `PianoStars-MR-v0.1.1.html` - version 0.1.1.
   - v0.1.1: keeps the microphone running in the headset, shows a microphone test and level, counts key presses seen by finger tracking, and can use a USB piano (MIDI).
@@ -15,7 +17,6 @@ Blocks fall onto the real piano keys. The game uses the same songs, levels and r
   - `game.js` - game rules (port of `GameView.java`).
   - `detect.wjs` - note finder for the microphone (port of `PitchDetector.java` and `PolyDetector.java`).
   - `xr.js` - headset mode: passthrough, key setup, saved anchor, hands.
-  - `fingers.js` - key presses from finger tracking.
   - `stage.js` - the blocks, key lights and panels.
   - `preview.js` - screen mode (practice without the headset).
   - `songs.json` - all 72 songs, exported from `Songs.java` and the MIDI files.

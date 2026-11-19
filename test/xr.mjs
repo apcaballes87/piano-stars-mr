@@ -109,7 +109,7 @@ await page.evaluate(([x, y, z]) => { const h = window.__dev.hands.right; h.posit
 await tipTo(...fk.down);
 await page.waitForTimeout(400);
 const after = await page.evaluate(() => { const g = window.__ps.app.game; return { perfect: g.perfect, next: g.nextIdx, pressed: window.__ps.stage.lastPress }; });
-log('finger press on', fk.midi, 'before', JSON.stringify({ perfect: fk.perfect, next: fk.next }), 'after', JSON.stringify(after));
+log('finger press (should not count now) on', fk.midi, 'before', JSON.stringify({ perfect: fk.perfect, next: fk.next }), 'after', JSON.stringify(after));
 await page.screenshot({ path: 'shots/xr-finger.png' });
 await tipTo(...fk.above);
 await page.evaluate(() => { window.__dev.hands.right.position.set(0.5, 0.4, 0.3); });

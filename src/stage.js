@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import { KeyLayout, FRONT_Z, isBlack, CAL_LOW, CAL_HIGH } from './layout.js';
 import { PC_COLORS, NAMES, ADVANCED, EASY, PENDING, MISS, SKIP, HIT, MAX_SPEED, MIN_SPEED } from './game.js';
 import { Panel, drawStar } from './panel.js';
-import { meter } from './audio.js';
 
 const FALL_H = 0.3; // blocks start this high above the keys (metres)
 const DIM = new THREE.Color('#4A4E72');
@@ -31,8 +30,11 @@ function dotTexture() {
   return t;
 }
 
+const PC_COLS = PC_COLORS.map((c) => new THREE.Color(c));
+const LEFT_COLS = PC_COLORS.map((c) => new THREE.Color(c).lerp(new THREE.Color('#000000'), 0.25));
+
 function pcColor(m) {
-  return new THREE.Color(PC_COLORS[((m % 12) + 12) % 12]);
+  return PC_COLS[((m % 12) + 12) % 12].clone();
 }
 
 /** A soft vertical light texture: bright at the bottom, clear at the top. */
@@ -332,7 +334,6 @@ export class Stage {
     this.keyFlash = new Float32Array(128);
     this.keyFlashColor = Array(128).fill(null);
     this.hearing = -1;
-    this.lastPress = '';
     this.firstVis = 0;
     this.lastSongTime = -1e9;
     if (this.keyLights) for (const k of this.keyLights.values()) this.content.remove(k);
@@ -505,9 +506,8 @@ export class Stage {
       const z = L.landZ(n.midi);
       const b = this.getBlock(used++);
       const dim = n.state === MISS || n.state === SKIP;
-      const col = dim ? DIM.clone() : pcColor(n.midi);
-      if (n.left && !dim) col.lerp(BLACK_C, 0.25);
-      b.body.material.color.copy(col);
+      const pc = n.midi % 12;
+      b.body.material.color.copy(dim ? DIM : n.left ? LEFT_COLS[pc] : PC_COLS[pc]);
       b.body.position.set(x, base + (vb + vt) / 2, z);
       b.body.scale.set(w, vt - vb, d);
       b.body.visible = true;
@@ -638,9 +638,12 @@ export class Stage {
     const ct = g.centerText();
     const hint = g.hintAge < 2 ? g.hint : '';
     const prog = Math.round(g.progress() * 100);
-    const lv = Math.round(meter(opts.level || 0) * 8);
-    const sig = [g.finished, g.score, g.combo, hear, ct && ct.text, ct && ct.sub, hint, g.speed, g.userPaused, prog, opts.input, lv, opts.mic, opts.fingers, opts.midi, this.lastPress].join('|');
-    this.hud.draw(sig, (c, P) => (g.finished ? this.drawResults(c, P) : this.drawPlayHud(c, P, ct, hint, prog, opts)), now, 0.1);
+    // Redraw only when something you need changes, and at most 4 times a second.
+    const sig = [g.finished, g.score, g.combo, ct && ct.text, ct && ct.sub, hint, g.speed, g.userPaused, prog, opts.input, opts.mic, opts.midi].join('|');
+    const ctKey = (ct && ct.text) + '|' + g.finished + '|' + g.userPaused;
+    const force = ctKey !== this.lastCtKey; // "Play D!" must show at once
+    this.lastCtKey = ctKey;
+    this.hud.draw(sig, (c, P) => (g.finished ? this.drawResults(c, P) : this.drawPlayHud(c, P, ct, hint, prog, opts)), now, 0.25, force);
   }
 
   drawPlayHud(c, P, ct, hint, prog, opts) {
@@ -650,19 +653,9 @@ export class Stage {
     // top row
     P.text(g.song.title, 36, 52, 40, '#FFFFFF', 'left', true, 370);
     P.text('Score ' + g.score + (g.combo >= 3 ? '  x' + g.combo : ''), W * 0.52, 52, 38, '#FFE066');
-    if (opts.input === 'tap') {
-      P.text('Tap keys', W - 36, 52, 32, '#B8B3E6', 'right', false);
-    } else {
-      const hm = this.hearing;
-      const txt = hm >= 0 ? 'Hear: ' + NAMES[hm % 12] : 'Listening';
-      c.font = 'bold 32px system-ui, Roboto, sans-serif';
-      const tw = c.measureText(txt).width;
-      c.fillStyle = hm >= 0 ? PC_COLORS[hm % 12] : '#4A4480';
-      c.beginPath();
-      c.arc(W - 36 - tw - 24, 52, 13, 0, Math.PI * 2);
-      c.fill();
-      P.text(txt, W - 36, 52, 32, '#FFFFFF', 'right', true);
-    }
+    if (opts.input === 'tap') P.text('Tap keys', W - 36, 52, 32, '#B8B3E6', 'right', false);
+    else if (opts.midi) P.text('USB piano', W - 36, 52, 32, '#5BE38B', 'right', true);
+    else P.text('Listening', W - 36, 52, 32, '#B8B3E6', 'right', false);
     // progress bar
     c.fillStyle = 'rgba(255,255,255,0.18)';
     c.fillRect(36, 92, W - 72, 10);
@@ -688,45 +681,12 @@ export class Stage {
     P.button('exit', 998, y, 166, h, 'Songs', '#8C6BFF', '#fff', 34);
   }
 
-  /** Small status line: microphone level, finger tracking, USB piano, last key press. */
+  /** A warning line only when the microphone has a problem. */
   drawInputs(c, P, opts) {
-    const W = P.pxW;
-    const y = 126;
-    let x = W - 36;
-    const parts = [];
-    if (opts.midi) parts.push(['USB piano', '#5BE38B']);
-    if (opts.fingers != null) parts.push([opts.fingers ? 'Fingers on' : 'Fingers off', opts.fingers ? '#5BE38B' : '#9C97CF']);
-    if (this.lastPress) parts.push(['Pressed: ' + this.lastPress, '#FFFFFF']);
-    c.font = '26px system-ui, Roboto, sans-serif';
-    c.textAlign = 'right';
-    c.textBaseline = 'middle';
-    for (const [t, col] of parts.reverse()) {
-      c.fillStyle = col;
-      c.fillText(t, x, y);
-      x -= c.measureText(t).width + 26;
-    }
-    // microphone: label + level bar
-    const bw = 120;
-    x -= bw;
-    const m = meter(opts.level || 0);
-    c.fillStyle = 'rgba(255,255,255,0.15)';
-    c.fillRect(x, y - 9, bw, 18);
-    c.fillStyle = opts.mic === 'ok' ? (m > 0.35 ? '#5BE38B' : '#FFD23F') : '#FF6B6B';
-    c.fillRect(x, y - 9, bw * m, 18);
-    const label = opts.mic === 'ok' ? 'Mic' : opts.mic === 'stalled' ? 'Mic: no sound data!' : opts.mic === 'muted' ? 'Mic muted!' : 'Mic off';
-    c.fillStyle = opts.mic === 'ok' ? '#DCD8FF' : '#FF6B6B';
-    c.fillText(label, x - 12, y);
-  }
-
-  /** Any detected key press: a short white flash on that key, and its name on the HUD. */
-  onInput(midi) {
-    const g = this.game;
-    if (!g) return;
-    let m = midi;
-    while (m > g.highMidi) m -= 12;
-    while (m < g.lowMidi) m += 12;
-    if (this.keyFlash && this.keyFlash[m] < 0.4) this.flashKey(m, '#FFFFFF');
-    this.lastPress = NAMES[midi % 12];
+    if (opts.midi || !opts.mic || opts.mic === 'ok') return;
+    const label = opts.mic === 'stalled' ? 'Microphone: no sound. Take off the headset and check the mic.'
+      : opts.mic === 'muted' ? 'The headset muted the microphone.' : 'Microphone is off.';
+    P.text(label, P.pxW - 36, 126, 26, '#FF6B6B', 'right', true);
   }
 
   drawResults(c, P) {
