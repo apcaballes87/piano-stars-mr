@@ -97,6 +97,23 @@ await page.waitForTimeout(300);
 await page.screenshot({ path: 'shots/xr-play.png' });
 const gs = await page.evaluate(() => { const g = window.__ps.app.game; return { score: g.score, perfect: g.perfect, next: g.nextIdx, mode: window.__ps.audio.mode }; });
 log('game:', JSON.stringify(gs));
+// ---- finger tracking: press the next key with the fingertip (no mic event)
+await page.waitForFunction(() => window.__ps.app.game.waiting, null, { timeout: 30000 });
+const fk = await page.evaluate(() => { const { app, stage } = window.__ps; const g = app.game; const n = g.notes[g.nextIdx]; const L = stage.layout;
+  const above = stage.content.localToWorld(stage.content.position.clone().set(L.x(n.midi), L.topY(n.midi) + 0.0066 + 0.02, L.landZ(n.midi)));
+  const down = stage.content.localToWorld(stage.content.position.clone().set(L.x(n.midi), L.topY(n.midi) + 0.0066 - 0.006, L.landZ(n.midi)));
+  return { midi: n.midi, above: above.toArray(), down: down.toArray(), perfect: g.perfect, next: g.nextIdx }; });
+await tipTo(...fk.above);
+await page.waitForTimeout(400);
+await page.evaluate(([x, y, z]) => { const h = window.__dev.hands.right; h.position.y += (y - h.position.y); }, fk.down); // quick drop
+await tipTo(...fk.down);
+await page.waitForTimeout(400);
+const after = await page.evaluate(() => { const g = window.__ps.app.game; return { perfect: g.perfect, next: g.nextIdx, pressed: window.__ps.stage.lastPress }; });
+log('finger press on', fk.midi, 'before', JSON.stringify({ perfect: fk.perfect, next: fk.next }), 'after', JSON.stringify(after));
+await page.screenshot({ path: 'shots/xr-finger.png' });
+await tipTo(...fk.above);
+await page.evaluate(() => { window.__dev.hands.right.position.set(0.5, 0.4, 0.3); });
+log('hud mic status:', await page.evaluate(() => [window.__ps.audio.status(), window.__ps.audio.level.toFixed(4), window.__ps.audio.hops]));
 // a wrong note in wait mode gives a hint
 await page.waitForFunction(() => window.__ps.app.game.waiting, null, { timeout: 30000 });
 await page.evaluate(() => { const g = window.__ps.app.game; g.noteHeard(g.notes[g.nextIdx].midi + 1, 0); });

@@ -3,11 +3,11 @@ import * as THREE from 'three';
 import SONGS from './songs.json';
 import { Game, LEVEL_NAMES, EASY, starsKey, clampSpeed } from './game.js';
 import { Stage } from './stage.js';
-import { AudioIO } from './audio.js';
+import { AudioIO, meter } from './audio.js';
 import { XRPlay, loadCal } from './xr.js';
 import { PreviewPlay } from './preview.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const LEVEL_COLORS = ['#3BCEAC', '#4D9DE0', '#FF5A5F'];
 
 // ------------------------------------------------------------ settings
@@ -36,6 +36,7 @@ const S = {
   speed: store.get('speed', 1),
   input: store.get('input', 'mic'), // screen mode only: 'mic' or 'tap'
   view: store.get('view', null), // 'mr' or 'screen'
+  fingers: store.get('fingers', true), // headset: also count key presses seen by hand tracking
 };
 S.wait = store.get('wait_' + S.level, S.level === EASY);
 
@@ -92,16 +93,63 @@ const app = {
   },
 };
 
+// ------------------------------------------------------------ key press inputs
+
+// One key press can arrive from more than one input (microphone, finger tracking, USB piano).
+// Count it once: ignore the same note name from another input within 0.3 s.
+const recent = [];
+let midiInputs = 0;
+
+app.settings = () => S;
+app.midiCount = () => midiInputs;
+app.input = (m, ago, src) => {
+  const t = performance.now() / 1000 - ago;
+  const pc = ((m % 12) + 12) % 12;
+  while (recent.length && t - recent[0].t > 1) recent.shift();
+  for (const r of recent) {
+    if (r.pc === pc && r.src !== src && Math.abs(r.t - t) < 0.3) return;
+  }
+  recent.push({ pc, src, t });
+  if (app.game) {
+    app.game.noteHeard(m, ago);
+    stage.onInput(m);
+  }
+  if (mode === 'screen') preview.heard(m);
+};
+
 const xr = new XRPlay(app);
 const preview = new PreviewPlay(app);
 
-audio.onNote = (m, ago) => {
-  if (app.game) app.game.noteHeard(m, ago);
-  if (mode === 'screen') preview.heard(m);
-};
+audio.onNote = (m, ago) => app.input(m, ago, 'mic');
 audio.onHear = (m) => {
   stage.hearing = m;
 };
+
+async function connectMidi() {
+  if (!navigator.requestMIDIAccess) {
+    toast('This browser cannot use a USB piano.');
+    return;
+  }
+  try {
+    const acc = await navigator.requestMIDIAccess();
+    const hook = () => {
+      midiInputs = 0;
+      for (const inp of acc.inputs.values()) {
+        midiInputs++;
+        inp.onmidimessage = (e) => {
+          const [st, note, vel] = e.data;
+          if ((st & 0xf0) === 0x90 && vel > 0) app.input(note, 0, 'midi');
+        };
+      }
+      render();
+    };
+    acc.onstatechange = hook;
+    hook();
+    toast(midiInputs ? 'USB piano connected.' : 'No USB piano found. Connect the cable, then try again.');
+  } catch (e) {
+    toast('Cannot use a USB piano: ' + (e && e.message ? e.message : e));
+  }
+}
 
 // ------------------------------------------------------------ menu
 
@@ -186,6 +234,11 @@ function render() {
   $('speed').value = Math.round((S.speed - 0.5) / 0.05);
   const needMic = !audio.micOk && (S.view === 'mr' || S.input === 'mic');
   $('micBar').style.display = needMic ? '' : 'none';
+  $('micTest').style.display = audio.micOk ? '' : 'none';
+  $('fingers').textContent = S.fingers ? 'Finger tracking: ON' : 'Finger tracking: OFF';
+  $('fingerRow').style.display = S.view === 'mr' ? '' : 'none';
+  $('midiBtn').style.display = navigator.requestMIDIAccess ? '' : 'none';
+  $('midiBtn').textContent = midiInputs ? 'USB piano connected' : 'Connect USB piano (MIDI)';
   const cal = loadCal();
   $('setupRow').style.display = S.view === 'mr' ? '' : 'none';
   $('setupState').textContent = cal ? 'Your piano is set up.' : 'Not set up yet. It takes 10 seconds.';
@@ -316,8 +369,9 @@ function wire() {
   $('speed').onchange = () => store.set('speed', S.speed);
   $('micBtn').onclick = () => {
     audio.startMic().then((ok) => {
+      if (ok) audio.setMode(S.twoHands ? 'poly' : 'mono');
       render();
-      toast(ok ? 'The microphone is on.' : 'Cannot use the microphone. Allow it in the browser settings.');
+      toast(ok ? 'The microphone is on. Play a key to test it.' : 'Cannot use the microphone. ' + audio.error);
     });
   };
   $('setupBtn').onclick = () => {
@@ -329,7 +383,38 @@ function wire() {
     toast('Piano setup removed. You will set it up again next time.');
     render();
   };
+  $('fingers').onclick = () => {
+    S.fingers = !S.fingers;
+    store.set('fingers', S.fingers);
+    render();
+  };
+  $('midiBtn').onclick = () => connectMidi();
   $('ver').textContent = 'v' + VERSION;
+  micTestLoop();
+}
+
+// Live microphone test on the menu: a level bar and the last note heard.
+function micTestLoop() {
+  const bar = $('micLevel');
+  const txt = $('micHeard');
+  const tick = () => {
+    if ($('menu').style.display !== 'none' && audio.micOk) {
+      audio.keepAlive();
+      const st = audio.status();
+      bar.style.width = Math.round(meter(audio.level) * 100) + '%';
+      bar.style.background = st !== 'ok' ? '#FF6B6B' : meter(audio.level) > 0.35 ? '#5BE38B' : '#FFD23F';
+      const recentNote = performance.now() - audio.heardAt < 3000 && audio.heardMidi >= 0;
+      if (st === 'stalled') txt.textContent = 'No sound data from the microphone.' + (audio.error ? ' ' + audio.error : '');
+      else if (st === 'muted') txt.textContent = 'The headset muted the microphone. Check the mic button on the Quest menu.';
+      else txt.textContent = recentNote ? 'Heard: ' + noteLabel(audio.heardMidi) : 'Play a piano key to test.';
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+function noteLabel(m) {
+  return ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][m % 12] + (Math.floor(m / 12) - 1);
 }
 
 async function boot() {

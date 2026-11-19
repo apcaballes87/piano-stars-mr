@@ -77,8 +77,9 @@ function makeMono(rate) {
       frames++;
       if (frames <= 12) {
         noiseSum += rms;
-        if (frames === 12) gate = Math.min(0.04, Math.max(0.006, (noiseSum / 12) * 2.5));
+        if (frames === 12) gate = Math.min(0.04, Math.max(0.002, (noiseSum / 12) * 2.5));
         prevRms = rms;
+        post({ t: 'hear', m: -1, lv: rms });
         return;
       }
       if (rms < gate) {
@@ -218,7 +219,8 @@ function makePoly(rawRate) {
       // measure the room noise during the first half second
       rmsSum += rms;
       for (let k = 0; k < COUNT; k++) floor[k] += sal[k] / 10;
-      if (frames === 10) rmsGate = Math.min(0.04, Math.max(0.005, (rmsSum / 10) * 2.5));
+      if (frames === 10) rmsGate = Math.min(0.04, Math.max(0.002, (rmsSum / 10) * 2.5));
+      post({ t: 'hear', m: -1, lv: rms });
       return;
     }
     const loud = rms > rmsGate;

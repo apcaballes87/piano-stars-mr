@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { KeyLayout, FRONT_Z, isBlack, CAL_LOW, CAL_HIGH } from './layout.js';
 import { PC_COLORS, NAMES, ADVANCED, EASY, PENDING, MISS, SKIP, HIT, MAX_SPEED, MIN_SPEED } from './game.js';
 import { Panel, drawStar } from './panel.js';
+import { meter } from './audio.js';
 
 const FALL_H = 0.3; // blocks start this high above the keys (metres)
 const DIM = new THREE.Color('#4A4E72');
@@ -310,6 +311,7 @@ export class Stage {
     this.keyFlash = new Float32Array(128);
     this.keyFlashColor = Array(128).fill(null);
     this.hearing = -1;
+    this.lastPress = '';
     this.firstVis = 0;
     this.lastSongTime = -1e9;
     if (this.keyLights) for (const k of this.keyLights.values()) this.content.remove(k);
@@ -606,7 +608,8 @@ export class Stage {
     const ct = g.centerText();
     const hint = g.hintAge < 2 ? g.hint : '';
     const prog = Math.round(g.progress() * 100);
-    const sig = [g.finished, g.score, g.combo, hear, ct && ct.text, ct && ct.sub, hint, g.speed, g.userPaused, prog, opts.input].join('|');
+    const lv = Math.round(meter(opts.level || 0) * 8);
+    const sig = [g.finished, g.score, g.combo, hear, ct && ct.text, ct && ct.sub, hint, g.speed, g.userPaused, prog, opts.input, lv, opts.mic, opts.fingers, opts.midi, this.lastPress].join('|');
     this.hud.draw(sig, (c, P) => (g.finished ? this.drawResults(c, P) : this.drawPlayHud(c, P, ct, hint, prog, opts)), now, 0.1);
   }
 
@@ -635,12 +638,14 @@ export class Stage {
     c.fillRect(36, 92, W - 72, 10);
     c.fillStyle = '#3BCEAC';
     c.fillRect(36, 92, ((W - 72) * prog) / 100, 10);
+    // what the game can hear and see
+    if (opts.input !== 'tap') this.drawInputs(c, P, opts);
     // centre text
     if (ct) {
-      P.text(ct.text, W / 2, 170, ct.text.length > 3 ? 64 : 84, ct.color);
-      if (ct.sub) P.text(ct.sub, W / 2, 232, 30, '#DCD8FF', 'center', false);
+      P.text(ct.text, W / 2, 184, ct.text.length > 3 ? 64 : 84, ct.color);
+      if (ct.sub) P.text(ct.sub, W / 2, 240, 28, '#DCD8FF', 'center', false);
     }
-    if (hint) P.text(hint, W / 2, ct && ct.sub ? 262 : 236, 34, '#FFB3B3');
+    if (hint) P.text(hint, W / 2, ct && ct.sub ? 268 : 246, 32, '#FFB3B3');
     // buttons
     const y = 296;
     const h = 84;
@@ -651,6 +656,47 @@ export class Stage {
     P.button('faster', 682, y, 110, h, '+', '#3B3570', '#fff', 52);
     P.button('restart', 810, y, 170, h, 'Restart', '#4D9DE0', '#fff', 34);
     P.button('exit', 998, y, 166, h, 'Songs', '#8C6BFF', '#fff', 34);
+  }
+
+  /** Small status line: microphone level, finger tracking, USB piano, last key press. */
+  drawInputs(c, P, opts) {
+    const W = P.pxW;
+    const y = 126;
+    let x = W - 36;
+    const parts = [];
+    if (opts.midi) parts.push(['USB piano', '#5BE38B']);
+    if (opts.fingers != null) parts.push([opts.fingers ? 'Fingers on' : 'Fingers off', opts.fingers ? '#5BE38B' : '#9C97CF']);
+    if (this.lastPress) parts.push(['Pressed: ' + this.lastPress, '#FFFFFF']);
+    c.font = '26px system-ui, Roboto, sans-serif';
+    c.textAlign = 'right';
+    c.textBaseline = 'middle';
+    for (const [t, col] of parts.reverse()) {
+      c.fillStyle = col;
+      c.fillText(t, x, y);
+      x -= c.measureText(t).width + 26;
+    }
+    // microphone: label + level bar
+    const bw = 120;
+    x -= bw;
+    const m = meter(opts.level || 0);
+    c.fillStyle = 'rgba(255,255,255,0.15)';
+    c.fillRect(x, y - 9, bw, 18);
+    c.fillStyle = opts.mic === 'ok' ? (m > 0.35 ? '#5BE38B' : '#FFD23F') : '#FF6B6B';
+    c.fillRect(x, y - 9, bw * m, 18);
+    const label = opts.mic === 'ok' ? 'Mic' : opts.mic === 'stalled' ? 'Mic: no sound data!' : opts.mic === 'muted' ? 'Mic muted!' : 'Mic off';
+    c.fillStyle = opts.mic === 'ok' ? '#DCD8FF' : '#FF6B6B';
+    c.fillText(label, x - 12, y);
+  }
+
+  /** Any detected key press: a short white flash on that key, and its name on the HUD. */
+  onInput(midi) {
+    const g = this.game;
+    if (!g) return;
+    let m = midi;
+    while (m > g.highMidi) m -= 12;
+    while (m < g.lowMidi) m += 12;
+    if (this.keyFlash && this.keyFlash[m] < 0.4) this.flashKey(m, '#FFFFFF');
+    this.lastPress = NAMES[midi % 12];
   }
 
   drawResults(c, P) {

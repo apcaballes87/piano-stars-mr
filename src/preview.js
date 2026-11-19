@@ -37,6 +37,7 @@ export class PreviewPlay {
     this.resize();
     this.lastTime = null;
     if (opts.input === 'mic') this.audio.setMode(opts.twoHands ? 'poly' : 'mono');
+    this.audio.keepAlive();
     this.renderer.setAnimationLoop((t) => this.frame(t));
   }
 
@@ -151,8 +152,7 @@ export class PreviewPlay {
     }
     const m = pick.userData.midi;
     this.audio.tone(m);
-    this.keyDown(m);
-    if (this.game) this.game.noteHeard(m, 0);
+    this.app.input(m, 0, 'tap');
   }
 
   keyDown(m) {
@@ -184,7 +184,12 @@ export class PreviewPlay {
     if (this.game) {
       this.game.update(dt);
       this.stage.update(dt, now);
-      this.stage.drawHud(now, { input: this.opts.input });
+      this.stage.drawHud(now, {
+        input: this.opts.input,
+        mic: this.audio.status(),
+        level: this.audio.level,
+        midi: this.app.midiCount() > 0,
+      });
     }
     for (const mesh of this.keyMeshes || []) {
       const m = mesh.userData.midi;

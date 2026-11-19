@@ -2,10 +2,16 @@
 import tapCode from './tap.wjs';
 import detectCode from './detect.wjs';
 
+const MIC_CONSTRAINTS = {
+  audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+};
+
 export class AudioIO {
   constructor() {
     this.ctx = null;
     this.stream = null;
+    this.source = null;
+    this.tapNode = null;
     this.worker = null;
     this.micOk = false;
     this.mode = 'mono';
@@ -13,6 +19,14 @@ export class AudioIO {
     this.onHear = null; // (midi, level)
     this.voices = new Set();
     this.out = null;
+    // diagnostics
+    this.level = 0; // last sound level (RMS)
+    this.hops = 0; // sound blocks that reached the note finder
+    this.lastHopAt = 0; // performance.now() of the last block
+    this.heardMidi = -1;
+    this.heardAt = 0;
+    this.error = '';
+    this.restarting = false;
   }
 
   ensureCtx() {
@@ -22,8 +36,12 @@ export class AudioIO {
       this.out = this.ctx.createGain();
       this.out.gain.value = 0.5;
       this.out.connect(this.ctx.destination);
+      // Some browsers stop the audio when the headset view opens. Start it again.
+      this.ctx.addEventListener('statechange', () => {
+        if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') this.ctx.resume().catch(() => {});
+      });
     }
-    if (this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
     return this.ctx;
   }
 
@@ -32,21 +50,18 @@ export class AudioIO {
     if (this.micOk) return true;
     const ctx = this.ensureCtx();
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
+      this.stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
     } catch (e) {
       console.warn('mic', e);
+      this.error = 'No microphone: ' + (e && e.name ? e.name : e);
       return false;
     }
     try {
       const url = URL.createObjectURL(new Blob([tapCode], { type: 'text/javascript' }));
       await ctx.audioWorklet.addModule(url);
-      const src = ctx.createMediaStreamSource(this.stream);
       const tap = new AudioWorkletNode(ctx, 'ps-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
       const mute = ctx.createGain();
       mute.gain.value = 0;
-      src.connect(tap);
       tap.connect(mute);
       mute.connect(ctx.destination);
       const wurl = URL.createObjectURL(new Blob([detectCode], { type: 'text/javascript' }));
@@ -57,19 +72,82 @@ export class AudioIO {
       this.worker.postMessage({ cmd: 'mode', mode: this.mode, reset: true });
       this.worker.onmessage = (e) => this.fromWorker(e.data);
       this.tapNode = tap;
+      this.connectStream();
       this.micOk = true;
+      this.error = '';
       return true;
     } catch (e) {
       console.warn('mic pipeline', e);
+      this.error = 'Sound setup failed: ' + (e && e.message ? e.message : e);
       return false;
     }
+  }
+
+  connectStream() {
+    if (this.source) {
+      try {
+        this.source.disconnect();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+    this.source = this.ctx.createMediaStreamSource(this.stream);
+    this.source.connect(this.tapNode);
+    const tr = this.stream.getAudioTracks()[0];
+    if (tr) tr.addEventListener('ended', () => this.restartMic());
+  }
+
+  /** Gets a new microphone stream (for example after the browser stopped the old one). */
+  async restartMic() {
+    if (this.restarting || !this.tapNode) return;
+    this.restarting = true;
+    try {
+      if (this.stream) for (const t of this.stream.getTracks()) t.stop();
+      this.stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+      this.connectStream();
+      if (this.worker) this.worker.postMessage({ cmd: 'mode', mode: this.mode, reset: true });
+      this.error = '';
+    } catch (e) {
+      this.error = 'Microphone stopped: ' + (e && e.name ? e.name : e);
+    }
+    this.restarting = false;
+  }
+
+  /** Call often while playing: keeps the audio and the microphone running. */
+  keepAlive() {
+    if (!this.ctx) return;
+    if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+    if (!this.micOk) return;
+    const tr = this.stream && this.stream.getAudioTracks()[0];
+    const stalled = performance.now() - this.lastHopAt > 2500;
+    if (tr && tr.muted) this.mutedSince = this.mutedSince || performance.now();
+    else this.mutedSince = 0;
+    const longMuted = this.mutedSince && performance.now() - this.mutedSince > 3000;
+    const canRetry = performance.now() - (this.lastRestart || 0) > 6000;
+    if (!tr || tr.readyState === 'ended' || ((stalled || longMuted) && this.ctx.state === 'running' && canRetry)) {
+      this.lastRestart = performance.now();
+      this.restartMic();
+    }
+  }
+
+  /** 'ok', 'off' (not started), 'muted' (the system muted it) or 'stalled' (no sound data arrives). */
+  status() {
+    if (!this.micOk) return 'off';
+    const tr = this.stream && this.stream.getAudioTracks()[0];
+    if (tr && tr.muted) return 'muted';
+    return performance.now() - this.lastHopAt < 1500 ? 'ok' : 'stalled';
   }
 
   fromWorker(d) {
     if (d.t === 'note') {
       const ago = this.ctx ? Math.max(0, Math.min(0.5, this.ctx.currentTime - d.at)) : 0;
+      this.heardMidi = d.m;
+      this.heardAt = performance.now();
       this.onNote && this.onNote(d.m, ago);
     } else if (d.t === 'hear') {
+      this.level = d.lv;
+      this.hops++;
+      this.lastHopAt = performance.now();
       this.onHear && this.onHear(d.m, d.lv);
     }
   }
@@ -123,4 +201,10 @@ export class AudioIO {
     }
     this.voices.clear();
   }
+}
+
+/** 0..1 for a level meter (log scale, 0.0005 to 0.1 RMS). */
+export function meter(level) {
+  if (!(level > 0)) return 0;
+  return Math.max(0, Math.min(1, (Math.log10(level) + 3.3) / 2.3));
 }

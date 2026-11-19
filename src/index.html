@@ -33,6 +33,13 @@
   #micBar { background: #3B3570; border-radius: 18px; padding: 10px 14px; margin-top: 10px; }
   #micBar p { margin: 0 0 8px; color: #FFE066; }
   #micBtn { background: #5BE38B; color: #15122E; width: 100%; }
+  #micTest { background: #2E2A5C; border-radius: 18px; padding: 12px 14px; margin-top: 10px; }
+  .mt-row { display: flex; align-items: center; gap: 10px; }
+  .mt-bar { flex: 1; height: 16px; background: rgba(255,255,255,.15); border-radius: 8px; overflow: hidden; }
+  #micLevel { height: 100%; width: 0%; background: #FFD23F; transition: width .08s; }
+  #micHeard { margin-top: 8px; font-weight: 700; color: #FFE066; font-size: 18px; }
+  #fingers { background: #3BCEAC; color: #15122E; }
+  #midiBtn { background: #3B3570; }
   #setupRow { background: #2E2A5C; border-radius: 18px; padding: 10px 14px; margin-top: 12px; }
   #setupRow p { margin: 0 0 8px; color: #DCD8FF; font-size: 15px; }
   #setupBtn { background: #3BCEAC; color: #15122E; }
@@ -64,6 +71,12 @@
     <h3 id="speedLabel">Speed</h3>
     <input id="speed" type="range" min="0" max="40" step="1">
     <div id="micBar"><p>The game listens to your piano with the microphone.</p><button id="micBtn">Turn on the microphone</button></div>
+    <div id="micTest">
+      <div class="mt-row"><span>Microphone</span><div class="mt-bar"><div id="micLevel"></div></div></div>
+      <div id="micHeard">Play a piano key to test.</div>
+    </div>
+    <div class="row" id="fingerRow"><button id="fingers"></button></div>
+    <div class="row"><button id="midiBtn"></button></div>
     <div id="setupRow">
       <p id="setupState"></p>
       <div class="row" style="margin-top:0"><button id="setupBtn">Set up piano keys</button><button id="resetBtn">Forget setup</button></div>

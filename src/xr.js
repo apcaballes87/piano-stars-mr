@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { CAL_LOW, CAL_HIGH, NOMINAL_OCTAVE } from './layout.js';
 import { drawStar } from './panel.js';
+import { FingerKeys } from './fingers.js';
 
 const CAL_KEY = 'psmr.cal.v1';
 const HOLD_TIME = 1.0; // seconds the finger must stay still on a key
@@ -104,6 +105,8 @@ export class XRPlay {
     this.raycaster = new THREE.Raycaster();
     this.tmpM = new THREE.Matrix4();
     this.clock = 0;
+    this.lastKeepAlive = 0;
+    this.fingers = new FingerKeys(this.stage, (m) => this.app.input(m, 0, 'finger'));
     this.setupHands();
   }
 
@@ -186,6 +189,7 @@ export class XRPlay {
     this.frameCount = 0;
     this.lastTime = null;
     r.setAnimationLoop((t, frame) => this.frame(t, frame));
+    this.audio.keepAlive();
 
     const cal = loadCal();
     this.cal = cal;
@@ -294,6 +298,7 @@ export class XRPlay {
     this.game = this.app.makeGame();
     this.stage.setGame(this.game);
     this.stage.setVisibleMode('play');
+    this.fingers.reset();
     this.result = null;
   }
 
@@ -336,10 +341,22 @@ export class XRPlay {
     }
     for (const c of this.controllers) c.line.visible = !!(c.source && !c.source.hand);
 
+    if (now - this.lastKeepAlive > 1) {
+      this.lastKeepAlive = now;
+      this.audio.keepAlive();
+    }
     if (st === 'play' && this.game) {
+      const fingersOn = this.app.settings().fingers;
+      if (fingersOn) this.fingers.update(this.hands.map((h) => h.hand), now);
       this.game.update(dt);
       this.stage.update(dt, now);
-      this.stage.drawHud(now, { input: 'mic' });
+      this.stage.drawHud(now, {
+        input: 'mic',
+        mic: this.audio.status(),
+        level: this.audio.level,
+        fingers: fingersOn,
+        midi: this.app.midiCount() > 0,
+      });
     } else {
       this.drawGuide(now);
     }

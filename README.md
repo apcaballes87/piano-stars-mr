@@ -5,12 +5,15 @@ Blocks fall onto the real piano keys. The game uses the same songs, levels and r
 
 ## Files
 
-- `PianoStars-MR-v0.1.0.html` - the complete app in one file (version 0.1.0).
-- `piano-stars-mr/index.html` - the same file, in the folder that is deployed to Vercel.
+- `PianoStars-MR-v0.1.1.html` - the complete app in one file (version 0.1.1, the live version).
+  - v0.1.1: keeps the microphone running in the headset, shows a microphone test and level, counts key presses seen by finger tracking, and can use a USB piano (MIDI).
+- `PianoStars-MR-v0.1.0.html` - the first version.
+- `docs/index.html` - the same file. GitHub Pages serves this folder at https://apcaballes87.github.io/piano-stars-mr/
 - `src/` - source code.
   - `game.js` - game rules (port of `GameView.java`).
   - `detect.wjs` - note finder for the microphone (port of `PitchDetector.java` and `PolyDetector.java`).
   - `xr.js` - headset mode: passthrough, key setup, saved anchor, hands.
+  - `fingers.js` - key presses from finger tracking.
   - `stage.js` - the blocks, key lights and panels.
   - `preview.js` - screen mode (practice without the headset).
   - `songs.json` - all 72 songs, exported from `Songs.java` and the MIDI files.
@@ -25,8 +28,9 @@ Blocks fall onto the real piano keys. The game uses the same songs, levels and r
 
 ## Deploy
 
-1. Copy the new file to `piano-stars-mr/index.html`.
-2. In the `piano-stars-mr` folder, run `vercel deploy --prod --yes`.
+1. Copy the new file to `docs/index.html`.
+2. Commit and push to GitHub (`git add -A`, `git commit`, `git push`).
+3. GitHub Pages updates the site in about 1 minute.
 
 ## Update the songs
 
